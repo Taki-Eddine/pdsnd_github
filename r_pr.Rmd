@@ -38,7 +38,7 @@ data = bind_rows(read_csv_and_process('chicago.csv', 'Chicago'),
 data$city = as.factor(data$city)
 ```
 
-**Let's check for missing data.**
+**Let's check for any missing data.**
 
 Compute the number of NA values in each column
 
