@@ -1,0 +1,248 @@
+---
+title: "R Udacity project"
+output: html_r_udacity
+---
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(ggthemes)
+library(lubridate)
+library(cluster)
+library(factoextra)
+```
+
+Define a function to read our csv files, change columns' names to avoid spaces and define facor variables as factors, add a column containing the city of interest and finally drop the first column since it is not very relevant.
+
+```{r}
+read_csv_and_process = function(filepath, city){
+  df = read_csv(file = filepath,
+                skip = 1,
+                col_names = c('tempo_id', 'start_time', 'end_time',
+                              'trip_duration','start_station', 'end_station', 
+                              'user_type', 'gender', 'birth_year'),
+                col_types = cols(user_type=col_factor(levels = c('Subscriber', 'Customer')),
+                                 gender=col_factor(levels = c('Male', 'Female')))
+                )
+  
+  return (df %>% select(-1) %>% mutate(city = city))
+}
+```
+
+
+```{r}
+data = bind_rows(read_csv_and_process('chicago.csv', 'Chicago'),
+                 read_csv_and_process('new-york-city.csv', 'NewYork'),
+                 read_csv_and_process('washington.csv', 'Washington'))
+
+data$city = as.factor(data$city)
+```
+
+**Let's check for missing data.**
+
+Compute the number of NA values in each column
+
+```{r}
+colSums(is.na(data))
+```
+
+For a finer view, we compute the proportion of missing data but we separata data based on the city (except for Washington) and customer type. As expected, the ratio of missing data (gneder and birthyear) is very high for Customer type recorder as generally customers are not asked to give this kind of information, in the case of Chicago we observe that almost all data about gender and birthyear is missing, on the other hand we observe a ration of 85% in New York. In contrary we observe a very low ratio of missing information for records belonging to Customer type since generally customer are asked to provide this information when subscribing. 
+
+```{r}
+aggregate(data %>% select(c('gender', 'birth_year')), by=list(data$city, data$user_type), function(x) sum(is.na(x))/length(x) * 100) %>% 
+  rename(city = Group.1, user_type = Group.2) %>%
+  arrange(city, user_type) %>%
+  filter(city != 'Washington')
+```
+
+#Question 1: Females vs Males? Who uses the service more often?.
+
+```{r}
+ggplot(data=subset(data, !is.na(data$gender))) +
+  geom_bar(mapping = aes(x=gender, fill=gender)) + 
+  facet_wrap(city~.) + 
+  ylab('Number of users')
+```
+
+Based on this graph we can conclude that for each of the two cites males users are dominant (A factor of more than 3!). We don't have Washington data but we can predict the same trend. The folliwing computation is equivalent to this graph.
+
+
+```{r}
+data %>% filter(!is.na(gender)) %>% group_by(city, gender) %>% summarise(number_of_users = n())
+```
+#Question 2: Customer vs Subscribers? Who uses the service more often?.
+```{r}
+ggplot(data=subset(data, !is.na(data$user_type))) +
+  geom_bar(mapping = aes(x=user_type, fill=user_type)) + 
+  facet_wrap(city~.) + 
+  xlab('User type') +
+  ylab('Number of users')
+```
+
+This graph shows that for the three given cities the number of bike sharing subscribers is way bigger that those who are simple customers this is due to convenient price formulas offered to subscribers (More economical). 
+
+#Question 3: Clients ages?
+
+We start be computing numerical summaries:
+
+A general summary:
+
+```{r}
+summary(2017 - data$birth_year)
+```
+
+Finer summary by binning data into intervals:
+
+```{r}
+(2017 - data$birth_year) %>%
+  subset(!is.na(data$birth_year)) %>%
+  cut_width(10) %>% table()
+```
+
+The first summary indicates that 50% of users have less than 38 years and 75% of users are under the age of 45. So the majority of clients are more or less young.
+Min of 1 and max of 132 indicate some bad outlier data that should be excluded. The second summary is more fine grained as it shows the distibution more clearly. Based on the numbers I decided to exclude all users that are less than 15 yrs old and those who are older than 85 yrs. 
+
+The following density histogramme is more expressive:
+
+```{r}
+  data %>%
+  subset(!is.na(data$birth_year)) %>%
+  ggplot(mapping = aes(x = 2017 - birth_year)) +
+    geom_histogram(mapping = aes(y = ..density..), binwidth = 5, fill = 'lightblue', color='black') + 
+    geom_density(alpha=.2, fill="#FF6666") +
+    xlab('Age') + 
+    ylab('Density') +
+    ggtitle('Density of users based on their age') +
+    scale_x_continuous(breaks = seq(15,85, 5), limits = c(15,85))
+
+```
+
+This graphe confirme our hypothesis: The big majority of users are aged between 20 and 45 yrs. The number of users increases by aging until 30 yrs and starts to decrease steadely by getting older which is very excpected since older people are less capable to do physical efforts.
+To verify if it's the same trend for both genders and cities we plot the following graph where we split records by their gender which suggests nearly the same distibution across gender and towns.
+
+```{r}
+  data %>%
+  subset(!is.na(data$gender) & !is.na(data$birth_year)) %>%
+  ggplot(mapping = aes(x = 2017 - birth_year)) +
+    geom_histogram(mapping = aes(y = ..density.., fill=gender),position = position_dodge(), binwidth = 5, alpha=0.5, color='black') +
+    scale_x_continuous(breaks = seq(15,85, 5), limits = c(15,85)) +
+    facet_wrap(city~.)
+```
+
+#Question 4: Bicycles use over time?
+
+**Days of the week?**
+
+We start by retreiving the day of week from the start_time column. We use the wday function from the *lubridate* library.
+
+```{r}
+data = data %>%
+        mutate(day_of_week_start = c('Sun', 'Mon', 'Tues' , 'Wed', 'Thur', 'Fri', 'Sat')[wday(start_time)])
+data$day_of_week_start = factor(data$day_of_week_start, levels =  c('Mon', 'Tues' , 'Wed', 'Thur', 'Fri', 'Sat', 'Sun'))
+```
+
+A simple numerical summary is the result of table function which counts the number of bicycle rides per day of week.
+
+
+```{r}
+table(data$day_of_week_start)
+```
+
+An equivalent graph will be a barplot as shown bellow. This graph suggests (But not very precisely) that bike sharing is more frequent during workdays (People use bikes to go to school or work) and decereases during the weekend since people travel less.
+
+```{r}
+  data %>%
+  ggplot(mapping = aes(x = day_of_week_start)) +
+    geom_bar(fill = 'lightblue', color='black', width = 0.4) + 
+    xlab('Day of week') +
+    ylab('Number of users') +
+    ggtitle('The number of bicycle rides versus the day of week')
+    
+```
+
+
+**During the day?**
+
+```{r}
+data = data %>%
+        mutate(start_hour = hour(start_time))
+```
+
+We draw below a histogram representing the use id bikes based on the our of the day. The result is logical and as expected. Too early in the morning after midnight people are genrally home and therefor biker are not used a lot. The usae increases significantly by 7AM, people get up and head to school and work (Using bikes basicaly) then the use decreases again as people are in work and studying. Late in the afternoon the use increases again since students and employees head home. Again the use decreses late in the evening. 
+
+```{r}
+ggplot(mapping = aes(x = start_hour)) +
+    geom_histogram(data = data, mapping = aes(y = ..density..), binwidth = 1, fill = 'lightblue', color='black') + 
+    scale_x_continuous(breaks = 0:23) +
+    xlab('Hour') + 
+    ylab('Density') +
+    ggtitle('Density of bike sharing based on the hour of the day') 
+```
+
+#Question 5: Trajectories?
+
+
+**Trips duration?**
+
+Let's compute numerical stats first using the summary function. It shows that half of trip are under 11 minutes of length and 75% are less than 17 minutes long. Therefor most of the sharing is under 20 minutes long. Some of the trips are abnormally long (More than a day long!. It might be a recording error or customers who don't return bikes to stations or does not plug bikes correctly to indicate the trip end. Anyways these cases are very few in the data set and may be thrown out.   
+
+```{r}
+summary(data$trip_duration / 60)
+```
+
+Let us plot a histogramm like above.
+
+```{r}
+data %>%
+    ggplot() +
+      geom_histogram(mapping = aes(x = trip_duration / 60),binwidth = 1, fill = 'lightblue', color='black') + 
+      xlab('Duration') + 
+      ylab('Number of rides') 
+```
+
+Unfortunately the presence of very long trips obscures the graphs and make it very difficult to vizualize. Let's throw out alltrips longer than an hour and a half using the limits attribute of the scale_x_continuous layer.
+
+```{r}
+data %>%
+    ggplot() +
+      geom_histogram(mapping = aes(x = trip_duration / 60, y = ..density..) ,binwidth = 1, fill = 'lightblue', color='black') +
+      geom_density(mapping = aes(x = trip_duration / 60),alpha=.2, fill="#FF0000") +
+      scale_x_continuous(limits = c(0, 90)) + 
+      xlab('Duration (Minutes)') + 
+      ylab('Dnesity') +
+      ggtitle("Density of bike sharing versus the trip duration")
+```
+
+This graph confirms our hypothesis about trips durations. The big majority are under 25 minutes. Genrally people use bikes for short distances because it is effortful and it won't be convenient to take long trips especially to work and studies.
+
+
+What will be interesting is to compare trip durations for Customers and Subscribers.
+
+Given below a faceted histogram and a seprated numerical summary.
+
+```{r}
+data %>%
+    filter(!is.na(user_type)) %>%
+    ggplot() +
+      geom_histogram(mapping = aes(x = trip_duration / 60, y = ..density..) ,binwidth = 1, fill = 'lightblue', color='black') +
+      scale_x_continuous(limits = c(0, 90)) + 
+      facet_wrap(user_type~.) +
+      xlab('Duration (Minutes)') + 
+      ylab('Dnesity') +
+      ggtitle("Density of bike sharing versus the trip duration")
+```
+
+
+```{r}
+by(data$trip_duration[!is.na(data$user_type)] / 60, data$user_type[!is.na(data$user_type)], summary)
+```
+
+These are surprising results. Customers tend to take longer trips on average than Subscibers. Why? To explain these results I project it on my self. Generally when I have a subscriber monthly transport formula which includes an infinite trajectories for all distances inside the town I tend to take transport for all desinations even short ones and therefore the majority of my trips are not very long. On the other hand, without a subscription I take transport only for long trips because short trips are frequent and would be very costly. I think this applies to for bike sharing. Subscribers benefit from their unlimited formulas to take short trips but normal users spend money on bikes just for long worthy trips.
+
+
+**Different tranjectories?**
+
+Studying different taken starintg/ending stations is very important as it allows to discover frequently used stations and frequently take directions. This helps us assess locations performance, to diagnose profits, modify marketing and pricing strategies, to increase availibality where it's the more needeed, to regularize costly spots and so on...
+
+IMHO graphs would be well suited for visualization oe at least some clustering. One can retreive numerical proofs by grouping and aggregating too.  
+
