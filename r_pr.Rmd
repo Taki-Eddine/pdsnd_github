@@ -81,7 +81,7 @@ ggplot(data=subset(data, !is.na(data$user_type))) +
 
 This graph shows that for the three given cities the number of bike sharing subscribers is way bigger that those who are simple customers this is due to convenient price formulas offered to subscribers (More economical). 
 
-#Question 3: Clients ages?
+#Question 3: Clients' ages?
 
 We start be computing numerical summaries:
 
