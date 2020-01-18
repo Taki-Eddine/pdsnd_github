@@ -55,7 +55,7 @@ aggregate(data %>% select(c('gender', 'birth_year')), by=list(data$city, data$us
   filter(city != 'Washington')
 ```
 
-#Question 1: Females vs Males? Who uses the service more often?.
+#Question 1: Females or Males? Who uses the service more often?.
 
 ```{r}
 ggplot(data=subset(data, !is.na(data$gender))) +
